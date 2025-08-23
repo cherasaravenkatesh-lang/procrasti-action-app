@@ -5,171 +5,133 @@ from datetime import datetime, timedelta
 import time
 import json
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="Procrasti-Action",
-    page_icon="✅",
-    layout="wide"
-)
-
-# --- Initialize User Database ---
+# --- Page Configuration and Authentication (No changes here) ---
+st.set_page_config(page_title="Procrasti-Action", page_icon="✅", layout="wide")
 db.setup_users_db()
-
-# --- Authentication Logic ---
-if 'authenticated' not in st.session_state:
-    st.session_state.authenticated = False
+if 'authenticated' not in st.session_state: st.session_state.authenticated = False
 
 def login_form():
     st.title("Procrasti-Action")
     st.markdown("Tame your tasks, master your time.")
-    
     choice = st.selectbox("Login or Signup", ["Login", "Sign Up"], label_visibility="collapsed")
-    
     with st.form("auth_form"):
-        if choice == "Sign Up":
-            st.subheader("Create a New Account")
-        else:
-            st.subheader("Log In")
-
+        st.subheader("Create a New Account" if choice == "Sign Up" else "Log In")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
-        submit_button = st.form_submit_button(label=choice)
-
-        if submit_button:
+        if st.form_submit_button(label=choice):
             if not username or not password:
-                st.error("Username and password are required.")
-                return
-
+                st.error("Username and password are required."); return
             if choice == "Sign Up":
-                if db.add_user(username, password):
-                    st.success("Account created successfully! Please log in.")
-                else:
-                    st.error("Username already exists. Please choose another or log in.")
+                if db.add_user(username, password): st.success("Account created! Please log in.")
+                else: st.error("Username already exists.")
             elif choice == "Login":
                 if db.verify_user(username, password):
                     st.session_state.authenticated = True
                     st.session_state.username = username
                     st.rerun()
-                else:
-                    st.error("Invalid username or password.")
+                else: st.error("Invalid username or password.")
 
-# If not authenticated, show login form and stop execution of the rest of the app
 if not st.session_state.authenticated:
     login_form()
     st.stop()
 
-# --- Main App (only runs if authenticated) ---
-
+# --- Main App ---
 current_user = st.session_state.username
 db.setup_database(current_user)
 
-# --- Pomodoro Timer State ---
+# --- Pomodoro and Helper Functions (No changes here) ---
 if 'pomodoro_mode' not in st.session_state: st.session_state.pomodoro_mode = "Focus"
 if 'pomodoro_seconds' not in st.session_state: st.session_state.pomodoro_seconds = 25 * 60
 if 'pomodoro_running' not in st.session_state: st.session_state.pomodoro_running = False
 if 'pomodoro_sessions' not in st.session_state: st.session_state.pomodoro_sessions = 0
-
-# --- Helper Functions ---
 def format_date(date_str):
-    if date_str:
-        return datetime.fromisoformat(date_str).strftime("%a, %b %d, %Y")
+    if date_str: return datetime.fromisoformat(date_str).strftime("%a, %b %d, %Y")
     return "No date"
 
-# --- Sidebar ---
+# --- Sidebar (No changes here) ---
 with st.sidebar:
     st.title(f"Welcome, {current_user}!")
     if st.button("Logout", use_container_width=True):
         st.session_state.authenticated = False
         st.session_state.username = ""
         st.rerun()
-        
     st.divider()
-    
     st.header("Focus Timer")
     work_mins = st.slider('Focus Minutes', 1, 60, 25)
     short_break_mins = st.slider('Short Break', 1, 30, 5)
-    
     timer_placeholder = st.empty()
-    
     col1, col2, col3 = st.columns(3)
+    # (Pomodoro button logic remains the same)
     if col1.button("Start", use_container_width=True, disabled=st.session_state.pomodoro_running):
         st.session_state.pomodoro_running = True
         st.session_state.pomodoro_mode = "Focus"
         st.session_state.pomodoro_seconds = work_mins * 60
         st.rerun()
-
     if col2.button("Pause", use_container_width=True, disabled=not st.session_state.pomodoro_running):
         st.session_state.pomodoro_running = False
         st.rerun()
-
     if col3.button("Reset", use_container_width=True):
         st.session_state.pomodoro_running = False
         st.session_state.pomodoro_mode = "Focus"
         st.session_state.pomodoro_seconds = work_mins * 60
         st.session_state.pomodoro_sessions = 0
         st.rerun()
-    
+    # (Pomodoro timer display logic remains the same)
     if st.session_state.pomodoro_running:
         while st.session_state.pomodoro_seconds > 0 and st.session_state.pomodoro_running:
             mins, secs = divmod(st.session_state.pomodoro_seconds, 60)
             timer_placeholder.metric(f"{st.session_state.pomodoro_mode}", f"{mins:02d}:{secs:02d}")
             time.sleep(1)
             st.session_state.pomodoro_seconds -= 1
-        
         if st.session_state.pomodoro_running:
-            st.session_state.pomodoro_running = False
-            st.toast("Session complete!", icon="🎉")
-            if st.session_state.pomodoro_mode == "Focus":
-                st.session_state.pomodoro_sessions += 1
-                st.session_state.pomodoro_mode = "Break"
-                st.session_state.pomodoro_seconds = short_break_mins * 60
-            else:
-                st.session_state.pomodoro_mode = "Focus"
-                st.session_state.pomodoro_seconds = work_mins * 60
+            st.session_state.pomodoro_running = False; st.toast("Session complete!", icon="🎉")
+            st.session_state.pomodoro_mode = "Break" if st.session_state.pomodoro_mode == "Focus" else "Focus"
+            st.session_state.pomodoro_seconds = short_break_mins * 60 if st.session_state.pomodoro_mode == "Break" else work_mins * 60
+            if st.session_state.pomodoro_mode == "Focus": st.session_state.pomodoro_sessions += 1
             st.rerun()
     else:
         mins, secs = divmod(st.session_state.pomodoro_seconds, 60)
         timer_placeholder.metric(f"{st.session_state.pomodoro_mode}", f"{mins:02d}:{secs:02d}")
-        
     st.info(f"Completed Sessions: {st.session_state.pomodoro_sessions}")
 
 
 # --- Main App Interface ---
-tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "All Tasks", "Calendar", "People"])
-
-# UPDATED: Fetch data for the logged-in user
 tasks = db.get_all_tasks(current_user)
 people = db.get_all_people(current_user)
+people_names = [p['name'] for p in people]
 
+tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "All Tasks", "Calendar", "People"])
+
+# --- Dashboard & Calendar Tabs (No changes here) ---
 with tab1:
     st.header("Dashboard")
     st.write(f"Today is **{datetime.now().strftime('%A, %B %d')}**. You have **{len([t for t in tasks if t['status'] != 'Completed'])}** active tasks.")
-    
-    col1, col2 = st.columns(2)
-    today = datetime.now().date()
-    
+    col1, col2 = st.columns(2); today = datetime.now().date()
     with col1:
         st.subheader("Due Today / Overdue")
         due_today = [t for t in tasks if t['due_date'] and datetime.fromisoformat(t['due_date']).date() == today and t['status'] != 'Completed']
         overdue = [t for t in tasks if t['due_date'] and datetime.fromisoformat(t['due_date']).date() < today and t['status'] != 'Completed']
-        
-        if not due_today and not overdue:
-            st.success("Nothing is immediately due. Great job!")
-        
-        for task in overdue:
-            st.error(f"**{task['title']}** - Was due: {format_date(task['due_date'])}")
-        for task in due_today:
-            st.warning(f"**{task['title']}** - Due today")
-    
+        if not due_today and not overdue: st.success("Nothing is immediately due. Great job!")
+        for task in overdue: st.error(f"**{task['title']}** - Was due: {format_date(task['due_date'])}")
+        for task in due_today: st.warning(f"**{task['title']}** - Due today")
     with col2:
         st.subheader("Blocked Tasks")
         blocked_tasks = [t for t in tasks if t['status'] == 'Blocked']
         if blocked_tasks:
-            for task in blocked_tasks:
-                st.info(f"**{task['title']}** - Reason: {task['blocked_reason'] or 'Not specified'}")
-        else:
-            st.info("No blocked tasks. Keep up the momentum!")
+            for task in blocked_tasks: st.info(f"**{task['title']}** - Reason: {task['blocked_reason'] or 'Not specified'}")
+        else: st.info("No blocked tasks. Keep up the momentum!")
 
+with tab3:
+    st.header("Calendar")
+    task_data = [{'Task': t['title'], 'Date': datetime.fromisoformat(t['due_date']).date(), 'Duration': 1} for t in tasks if t['due_date']]
+    if task_data:
+        df = pd.DataFrame(task_data).set_index('Date').sort_index()
+        st.bar_chart(df[['Duration']])
+        st.dataframe(df.reset_index()[['Task', 'Date']], use_container_width=True)
+    else: st.info("No tasks with due dates to display on the calendar.")
+
+
+# --- All Tasks Tab (MAJOR UPDATES) ---
 with tab2:
     st.header("All Tasks")
     with st.expander("Add a New Task"):
@@ -177,14 +139,21 @@ with tab2:
             title = st.text_input("Task Title *")
             due_date = st.date_input("Due Date", value=None)
             notes = st.text_area("Notes & Context")
-            questions = st.text_area("Questions to Ask")
-            subtasks = st.text_area("Sub-tasks (one per line)")
             
+            # Simplified "General Questions" area
+            questions = st.text_area("General Questions for this task")
+            subtasks = st.text_area("Sub-tasks (one per line)")
+
+            # NEW: Linked People section for new tasks (simplified)
+            st.markdown("**Link People & Questions**")
+            linked_people_names = st.multiselect("Select people to link to this task", options=people_names)
+
             if st.form_submit_button("Add Task", type="primary"):
                 if not title: st.warning("Task Title is required.")
                 else:
-                    # UPDATED
-                    db.add_task(current_user, title, str(due_date) if due_date else None, notes, questions, subtasks)
+                    # Format linked people data for the database
+                    linked_people_data = [{"name": name, "question": ""} for name in linked_people_names]
+                    db.add_task(current_user, title, str(due_date) if due_date else None, notes, questions, subtasks, linked_people_data)
                     st.toast(f"Added task: {title}", icon="➕")
                     st.rerun()
     
@@ -194,54 +163,76 @@ with tab2:
     for task in tasks:
         if task['status'] in filter_status:
             due_date_str = f" (Due: {format_date(task['due_date'])})" if task['due_date'] else ""
-            status_label = f"{task['title']}{due_date_str}"
             
-            with st.status(status_label, expanded=False, state=("complete" if task['status'] == 'Completed' else "running")):
+            with st.status(f"{task['title']}{due_date_str}", expanded=False, state=("complete" if task['status'] == 'Completed' else "running")):
+                # Display linked people info cleanly
+                linked_people_list = json.loads(task['linked_people']) if task.get('linked_people') else []
+                if linked_people_list:
+                    st.markdown("**Linked People & Questions:**")
+                    for person in linked_people_list:
+                        st.caption(f"**{person['name']}**: {person.get('question', 'No question specified.')}")
+                
                 with st.form(key=f"form_{task['id']}"):
-                    new_title = st.text_input("Title", value=task['title'], key=f"title_{task['id']}")
-                    
+                    new_title = st.text_input("Title", value=task['title'])
                     cols = st.columns(2)
-                    new_status = cols[0].selectbox("Status", options=["To-Do", "In Progress", "Blocked", "Completed"], index=["To-Do", "In Progress", "Blocked", "Completed"].index(task['status']), key=f"status_{task['id']}")
+                    new_status = cols[0].selectbox("Status", options=["To-Do", "In Progress", "Blocked", "Completed"], index=["To-Do", "In Progress", "Blocked", "Completed"].index(task['status']))
                     due_date_val = datetime.fromisoformat(task['due_date']) if task['due_date'] else None
-                    new_due_date = cols[1].date_input("Due Date", value=due_date_val, key=f"date_{task['id']}")
-
-                    new_notes = st.text_area("Notes", value=task['notes'], key=f"notes_{task['id']}")
-                    new_questions = st.text_area("Questions", value=task['questions'], key=f"questions_{task['id']}")
-                    
-                    new_blocked_reason = task['blocked_reason']
+                    new_due_date = cols[1].date_input("Due Date", value=due_date_val)
+                    new_notes = st.text_area("Notes", value=task['notes'])
+                    new_questions = st.text_area("General Questions", value=task['questions'])
+                    new_blocked_reason = task['blocked_reason'] if task['status'] == 'Blocked' else ''
                     if new_status == 'Blocked':
-                        new_blocked_reason = st.text_input("Reason for being blocked?", value=task.get('blocked_reason', ''), key=f"blocked_{task['id']}")
+                        new_blocked_reason = st.text_input("Reason for being blocked?", value=task.get('blocked_reason', ''))
 
+                    # DYNAMIC UI for editing linked people
+                    st.markdown("**Edit Linked People & Questions**")
+                    
+                    # Initialize session state for this task's people
+                    session_key = f"linked_people_{task['id']}"
+                    if session_key not in st.session_state:
+                        st.session_state[session_key] = linked_people_list
+                    
+                    # UI to remove people
+                    indices_to_remove = []
+                    for i, person in enumerate(st.session_state[session_key]):
+                        col1, col2, col3 = st.columns([3, 5, 1])
+                        col1.markdown(f"**{person['name']}**")
+                        # Update question in session state directly
+                        st.session_state[session_key][i]['question'] = col2.text_input("Question", value=person.get('question', ''), key=f"q_{task['id']}_{i}", label_visibility="collapsed")
+                        if col3.button("✖️", key=f"del_{task['id']}_{i}"):
+                            indices_to_remove.append(i)
+                    
+                    # Remove people if requested
+                    if indices_to_remove:
+                        st.session_state[session_key] = [p for i, p in enumerate(st.session_state[session_key]) if i not in indices_to_remove]
+                        st.rerun()
+
+                    # UI to add a new person
+                    new_person_name = st.selectbox("Add a person", options=[""] + people_names, key=f"add_person_{task['id']}")
+                    if new_person_name:
+                        # Add to session state and rerun to update UI
+                        st.session_state[session_key].append({"name": new_person_name, "question": ""})
+                        st.rerun()
+
+                    # Subtasks UI (no change)
+                    st.markdown("**Sub-tasks**")
                     subtasks_list = json.loads(task['subtasks']) if task['subtasks'] else []
                     for i, subtask in enumerate(subtasks_list):
                         subtasks_list[i]['done'] = st.checkbox(subtask['text'], value=subtask['done'], key=f"sub_{task['id']}_{i}")
 
                     btn_cols = st.columns(2)
                     if btn_cols[0].form_submit_button("Save Changes", type="primary", use_container_width=True):
-                        # UPDATED
-                        db.update_task(current_user, task['id'], new_title, new_status, str(new_due_date) if new_due_date else None, new_notes, new_questions, subtasks_list, new_blocked_reason)
+                        db.update_task(current_user, task['id'], new_title, new_status, str(new_due_date) if new_due_date else None, new_notes, new_questions, subtasks_list, new_blocked_reason, st.session_state[session_key])
+                        del st.session_state[session_key] # Clean up session state
                         st.toast(f"Updated '{new_title}'", icon="💾")
                         st.rerun()
                     if btn_cols[1].form_submit_button("Delete", use_container_width=True):
-                        # UPDATED
                         db.delete_task(current_user, task['id'])
+                        del st.session_state[session_key] # Clean up session state
                         st.toast(f"Deleted '{task['title']}'", icon="🗑️")
                         st.rerun()
 
-with tab3:
-    st.header("Calendar")
-    task_data = []
-    for task in tasks:
-        if task['due_date']:
-            start_date = datetime.fromisoformat(task['due_date']).date()
-            task_data.append({'Task': task['title'], 'Date': start_date, 'Duration': 1})
-    if task_data:
-        df = pd.DataFrame(task_data).set_index('Date').sort_index()
-        st.bar_chart(df[['Duration']])
-        st.dataframe(df.reset_index()[['Task', 'Date']], use_container_width=True)
-    else:
-        st.info("No tasks with due dates to display on the calendar.")
-
+# --- People Tab (Corrected Logic) ---
 with tab4:
     st.header("People")
     with st.expander("Add New Person"):
@@ -250,21 +241,24 @@ with tab4:
             if st.form_submit_button("Add Person", type="primary"):
                 if person_name:
                     try:
-                        # UPDATED
                         db.add_person(current_user, person_name)
                         st.toast(f"Added {person_name}.", icon="👥")
                         st.rerun()
-                    except: st.error("Could not add person. They may already exist.")
+                    except sqlite3.IntegrityError: # Catching the specific error
+                        st.error(f"'{person_name}' already exists in your contacts.")
+                    except Exception as e:
+                        st.error(f"An error occurred: {e}")
                 else: st.warning("Please enter a name.")
 
-    selected_person_name = st.selectbox("Select a person:", [p['name'] for p in people])
-    if selected_person_name:
+    if not people:
+        st.info("You haven't added any people yet. Add someone to start tracking interactions.")
+    else:
+        selected_person_name = st.selectbox("Select a person:", people_names)
         person = next((p for p in people if p['name'] == selected_person_name), None)
         if person:
             with st.form(key=f"person_log_{person['id']}"):
                 log_content = st.text_area("Interaction Log", value=person['interaction_log'], height=300)
                 if st.form_submit_button("Save Log", type="primary"):
-                    # UPDATED
                     db.update_person_log(current_user, person['id'], log_content)
                     st.toast("Log updated!", icon="📝")
                     st.rerun()
