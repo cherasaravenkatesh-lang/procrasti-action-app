@@ -1,0 +1,10 @@
+# Database file
+procrasti_action.db
+
+# Python virtual environment & cache
+venv/
+*.pyc
+__pycache__/
+
+# Streamlit specific
+.streamlit/
