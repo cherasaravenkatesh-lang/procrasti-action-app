@@ -8,22 +8,66 @@ import json
 # --- Page Configuration ---
 st.set_page_config(
     page_title="Procrasti-Action",
-    page_icon="🚀",
+    page_icon="✅",
     layout="wide"
 )
 
-# --- Initialize Database ---
-db.setup_database()
+# --- Initialize User Database ---
+db.setup_users_db()
+
+# --- Authentication Logic ---
+if 'authenticated' not in st.session_state:
+    st.session_state.authenticated = False
+
+def login_form():
+    st.title("Procrasti-Action")
+    st.markdown("Tame your tasks, master your time.")
+    
+    choice = st.selectbox("Login or Signup", ["Login", "Sign Up"], label_visibility="collapsed")
+    
+    with st.form("auth_form"):
+        if choice == "Sign Up":
+            st.subheader("Create a New Account")
+        else:
+            st.subheader("Log In")
+
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submit_button = st.form_submit_button(label=choice)
+
+        if submit_button:
+            if not username or not password:
+                st.error("Username and password are required.")
+                return
+
+            if choice == "Sign Up":
+                if db.add_user(username, password):
+                    st.success("Account created successfully! Please log in.")
+                else:
+                    st.error("Username already exists. Please choose another or log in.")
+            elif choice == "Login":
+                if db.verify_user(username, password):
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+
+# If not authenticated, show login form and stop execution of the rest of the app
+if not st.session_state.authenticated:
+    login_form()
+    st.stop()
+
+# --- Main App (only runs if authenticated) ---
+
+current_user = st.session_state.username
+db.setup_database(current_user)
 
 # --- Pomodoro Timer State ---
-if 'pomodoro_mode' not in st.session_state:
-    st.session_state.pomodoro_mode = "Work"  # Work, Short Break, Long Break
-if 'pomodoro_seconds' not in st.session_state:
-    st.session_state.pomodoro_seconds = 25 * 60
-if 'pomodoro_running' not in st.session_state:
-    st.session_state.pomodoro_running = False
-if 'pomodoro_sessions' not in st.session_state:
-    st.session_state.pomodoro_sessions = 0
+if 'pomodoro_mode' not in st.session_state: st.session_state.pomodoro_mode = "Focus"
+if 'pomodoro_seconds' not in st.session_state: st.session_state.pomodoro_seconds = 25 * 60
+if 'pomodoro_running' not in st.session_state: st.session_state.pomodoro_running = False
+if 'pomodoro_sessions' not in st.session_state: st.session_state.pomodoro_sessions = 0
 
 # --- Helper Functions ---
 def format_date(date_str):
@@ -31,34 +75,26 @@ def format_date(date_str):
         return datetime.fromisoformat(date_str).strftime("%a, %b %d, %Y")
     return "No date"
 
-def check_reminders(tasks):
-    now = datetime.now()
-    for task in tasks:
-        if task['due_date'] and task['status'] != 'Completed':
-            due = datetime.fromisoformat(task['due_date'])
-            if now.date() == due.date() and now < due:
-                 st.toast(f"🔔 Reminder: '{task['title']}' is due today!", icon="🔔")
-            elif due < now:
-                 st.toast(f"🚨 Overdue: '{task['title']}' was due on {format_date(task['due_date'])}", icon="🚨")
-
-# --- Sidebar for Pomodoro and Quick Add ---
+# --- Sidebar ---
 with st.sidebar:
-    st.title("Procrasti-Action")
-    st.image("https://img.icons8.com/plasticine/100/000000/rocket.png", width=100) # Placeholder logo
+    st.title(f"Welcome, {current_user}!")
+    if st.button("Logout", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.username = ""
+        st.rerun()
+        
+    st.divider()
     
-    st.header("🍅 Pomodoro Timer")
-    
-    # Pomodoro settings
-    work_mins = st.number_input('Work Minutes', value=25, min_value=1, max_value=60)
-    short_break_mins = st.number_input('Short Break Minutes', value=5, min_value=1, max_value=30)
-    long_break_mins = st.number_input('Long Break Minutes', value=15, min_value=1, max_value=60)
+    st.header("Focus Timer")
+    work_mins = st.slider('Focus Minutes', 1, 60, 25)
+    short_break_mins = st.slider('Short Break', 1, 30, 5)
     
     timer_placeholder = st.empty()
     
     col1, col2, col3 = st.columns(3)
     if col1.button("Start", use_container_width=True, disabled=st.session_state.pomodoro_running):
         st.session_state.pomodoro_running = True
-        st.session_state.pomodoro_mode = "Work"
+        st.session_state.pomodoro_mode = "Focus"
         st.session_state.pomodoro_seconds = work_mins * 60
         st.rerun()
 
@@ -68,212 +104,167 @@ with st.sidebar:
 
     if col3.button("Reset", use_container_width=True):
         st.session_state.pomodoro_running = False
-        st.session_state.pomodoro_mode = "Work"
+        st.session_state.pomodoro_mode = "Focus"
         st.session_state.pomodoro_seconds = work_mins * 60
         st.session_state.pomodoro_sessions = 0
         st.rerun()
-
+    
     if st.session_state.pomodoro_running:
         while st.session_state.pomodoro_seconds > 0 and st.session_state.pomodoro_running:
             mins, secs = divmod(st.session_state.pomodoro_seconds, 60)
-            timer_placeholder.metric(f"🕒 {st.session_state.pomodoro_mode}", f"{mins:02d}:{secs:02d}")
+            timer_placeholder.metric(f"{st.session_state.pomodoro_mode}", f"{mins:02d}:{secs:02d}")
             time.sleep(1)
             st.session_state.pomodoro_seconds -= 1
         
-        if st.session_state.pomodoro_running: # If timer finished naturally
+        if st.session_state.pomodoro_running:
             st.session_state.pomodoro_running = False
-            st.balloons()
-            if st.session_state.pomodoro_mode == "Work":
+            st.toast("Session complete!", icon="🎉")
+            if st.session_state.pomodoro_mode == "Focus":
                 st.session_state.pomodoro_sessions += 1
-                if st.session_state.pomodoro_sessions % 4 == 0:
-                    st.session_state.pomodoro_mode = "Long Break"
-                    st.session_state.pomodoro_seconds = long_break_mins * 60
-                else:
-                    st.session_state.pomodoro_mode = "Short Break"
-                    st.session_state.pomodoro_seconds = short_break_mins * 60
-            else: # If a break finishes
-                st.session_state.pomodoro_mode = "Work"
+                st.session_state.pomodoro_mode = "Break"
+                st.session_state.pomodoro_seconds = short_break_mins * 60
+            else:
+                st.session_state.pomodoro_mode = "Focus"
                 st.session_state.pomodoro_seconds = work_mins * 60
             st.rerun()
     else:
         mins, secs = divmod(st.session_state.pomodoro_seconds, 60)
-        timer_placeholder.metric(f"🕒 {st.session_state.pomodoro_mode}", f"{mins:02d}:{secs:02d}")
+        timer_placeholder.metric(f"{st.session_state.pomodoro_mode}", f"{mins:02d}:{secs:02d}")
         
     st.info(f"Completed Sessions: {st.session_state.pomodoro_sessions}")
 
+
 # --- Main App Interface ---
-tab1, tab2, tab3, tab4 = st.tabs(["🎯 Dashboard", "📝 All Tasks", "🗓️ Calendar", "👥 People"])
+tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "All Tasks", "Calendar", "People"])
 
-# Fetch all data once
-tasks = db.get_all_tasks()
-people = db.get_all_people()
-
-# Check reminders on each run
-check_reminders(tasks)
+# UPDATED: Fetch data for the logged-in user
+tasks = db.get_all_tasks(current_user)
+people = db.get_all_people(current_user)
 
 with tab1:
-    st.header("🎯 Dashboard")
-    st.write(f"Hello! Today is **{datetime.now().strftime('%A, %B %d')}**. You have **{len([t for t in tasks if t['status'] != 'Completed'])}** active tasks.")
+    st.header("Dashboard")
+    st.write(f"Today is **{datetime.now().strftime('%A, %B %d')}**. You have **{len([t for t in tasks if t['status'] != 'Completed'])}** active tasks.")
     
-    col1, col2, col3 = st.columns(3)
-    
+    col1, col2 = st.columns(2)
     today = datetime.now().date()
     
     with col1:
-        st.subheader("🔥 Due Today")
-        today_tasks = [t for t in tasks if t['due_date'] and datetime.fromisoformat(t['due_date']).date() == today and t['status'] != 'Completed']
-        if today_tasks:
-            for task in today_tasks:
-                st.checkbox(f"{task['title']}", key=f"dash_done_{task['id']}")
-        else:
-            st.write("No tasks due today. Time to plan or relax!")
-
+        st.subheader("Due Today / Overdue")
+        due_today = [t for t in tasks if t['due_date'] and datetime.fromisoformat(t['due_date']).date() == today and t['status'] != 'Completed']
+        overdue = [t for t in tasks if t['due_date'] and datetime.fromisoformat(t['due_date']).date() < today and t['status'] != 'Completed']
+        
+        if not due_today and not overdue:
+            st.success("Nothing is immediately due. Great job!")
+        
+        for task in overdue:
+            st.error(f"**{task['title']}** - Was due: {format_date(task['due_date'])}")
+        for task in due_today:
+            st.warning(f"**{task['title']}** - Due today")
+    
     with col2:
-        st.subheader("⚠️ Overdue")
-        overdue_tasks = [t for t in tasks if t['due_date'] and datetime.fromisoformat(t['due_date']).date() < today and t['status'] != 'Completed']
-        if overdue_tasks:
-            for task in overdue_tasks:
-                st.error(f"**{task['title']}** - Due: {format_date(task['due_date'])}")
-        else:
-            st.write("Nothing overdue. Great job!")
-
-    with col3:
-        st.subheader("🛑 Blocked")
+        st.subheader("Blocked Tasks")
         blocked_tasks = [t for t in tasks if t['status'] == 'Blocked']
         if blocked_tasks:
             for task in blocked_tasks:
-                st.warning(f"**{task['title']}** - Reason: {task['blocked_reason'] or 'Not specified'}")
+                st.info(f"**{task['title']}** - Reason: {task['blocked_reason'] or 'Not specified'}")
         else:
-            st.write("No blocked tasks!")
+            st.info("No blocked tasks. Keep up the momentum!")
 
 with tab2:
-    st.header("📝 All Tasks")
-
-    # --- Add New Task Form ---
-    with st.expander("➕ Add a New Action Item"):
+    st.header("All Tasks")
+    with st.expander("Add a New Task"):
         with st.form("new_task_form", clear_on_submit=True):
-            title = st.text_input("Task Title *", placeholder="e.g., Finalize project report")
+            title = st.text_input("Task Title *")
             due_date = st.date_input("Due Date", value=None)
-            notes = st.text_area("Context & Notes")
-            questions = st.text_area("Questions to Ask", placeholder="e.g., Who is the final approver?")
+            notes = st.text_area("Notes & Context")
+            questions = st.text_area("Questions to Ask")
             subtasks = st.text_area("Sub-tasks (one per line)")
             
-            submitted = st.form_submit_button("Add Task")
-            if submitted:
-                if not title:
-                    st.error("Task Title is required.")
+            if st.form_submit_button("Add Task", type="primary"):
+                if not title: st.warning("Task Title is required.")
                 else:
-                    db.add_task(title, str(due_date) if due_date else None, notes, questions, subtasks)
-                    st.success(f"Added task: {title}")
+                    # UPDATED
+                    db.add_task(current_user, title, str(due_date) if due_date else None, notes, questions, subtasks)
+                    st.toast(f"Added task: {title}", icon="➕")
                     st.rerun()
     
-    # --- Task Display ---
-    st.subheader("Your Action Items")
-    
+    st.divider()
     filter_status = st.multiselect("Filter by status:", options=["To-Do", "In Progress", "Blocked", "Completed"], default=["To-Do", "In Progress", "Blocked"])
     
     for task in tasks:
         if task['status'] in filter_status:
-            with st.expander(f"{'✅' if task['status'] == 'Completed' else '◻️'} **{task['title']}** (Due: {format_date(task['due_date'])})"):
-                
-                # Use a form for each task to manage its state
+            due_date_str = f" (Due: {format_date(task['due_date'])})" if task['due_date'] else ""
+            status_label = f"{task['title']}{due_date_str}"
+            
+            with st.status(status_label, expanded=False, state=("complete" if task['status'] == 'Completed' else "running")):
                 with st.form(key=f"form_{task['id']}"):
                     new_title = st.text_input("Title", value=task['title'], key=f"title_{task['id']}")
                     
                     cols = st.columns(2)
                     new_status = cols[0].selectbox("Status", options=["To-Do", "In Progress", "Blocked", "Completed"], index=["To-Do", "In Progress", "Blocked", "Completed"].index(task['status']), key=f"status_{task['id']}")
-                    
                     due_date_val = datetime.fromisoformat(task['due_date']) if task['due_date'] else None
                     new_due_date = cols[1].date_input("Due Date", value=due_date_val, key=f"date_{task['id']}")
 
                     new_notes = st.text_area("Notes", value=task['notes'], key=f"notes_{task['id']}")
                     new_questions = st.text_area("Questions", value=task['questions'], key=f"questions_{task['id']}")
-
+                    
                     new_blocked_reason = task['blocked_reason']
                     if new_status == 'Blocked':
                         new_blocked_reason = st.text_input("Reason for being blocked?", value=task.get('blocked_reason', ''), key=f"blocked_{task['id']}")
 
-                    st.write("**Sub-tasks:**")
                     subtasks_list = json.loads(task['subtasks']) if task['subtasks'] else []
-                    
                     for i, subtask in enumerate(subtasks_list):
                         subtasks_list[i]['done'] = st.checkbox(subtask['text'], value=subtask['done'], key=f"sub_{task['id']}_{i}")
 
-                    # --- Action Buttons ---
-                    action_cols = st.columns(2)
-                    if action_cols[0].form_submit_button("💾 Save Changes", use_container_width=True):
-                        db.update_task(task['id'], new_title, new_status, str(new_due_date) if new_due_date else None, new_notes, new_questions, subtasks_list, new_blocked_reason)
-                        st.success(f"Updated '{new_title}'")
+                    btn_cols = st.columns(2)
+                    if btn_cols[0].form_submit_button("Save Changes", type="primary", use_container_width=True):
+                        # UPDATED
+                        db.update_task(current_user, task['id'], new_title, new_status, str(new_due_date) if new_due_date else None, new_notes, new_questions, subtasks_list, new_blocked_reason)
+                        st.toast(f"Updated '{new_title}'", icon="💾")
                         st.rerun()
-
-                    if action_cols[1].form_submit_button("🗑️ Delete", type="primary", use_container_width=True):
-                        db.delete_task(task['id'])
-                        st.warning(f"Deleted '{task['title']}'")
+                    if btn_cols[1].form_submit_button("Delete", use_container_width=True):
+                        # UPDATED
+                        db.delete_task(current_user, task['id'])
+                        st.toast(f"Deleted '{task['title']}'", icon="🗑️")
                         st.rerun()
 
 with tab3:
-    st.header("🗓️ Calendar View")
-    st.write("This is a simplified calendar view showing tasks with due dates.")
-
+    st.header("Calendar")
     task_data = []
     for task in tasks:
         if task['due_date']:
-            # Ensure the date is a proper datetime object
             start_date = datetime.fromisoformat(task['due_date']).date()
-            task_data.append({
-                'Task': task['title'],
-                'Date': start_date,
-                'Duration': 1 # Represent each task as lasting 1 day for the chart
-            })
-    
+            task_data.append({'Task': task['title'], 'Date': start_date, 'Duration': 1})
     if task_data:
-        df = pd.DataFrame(task_data)
-        
-        # --- Using st.bar_chart as a robust alternative to st.timeline ---
-        st.write("### Task Schedule")
-        
-        # Set the date as the index for the chart's x-axis and sort it
-        df = df.set_index('Date').sort_index()
-        
-        # Display the chart. This function is available in all Streamlit versions.
+        df = pd.DataFrame(task_data).set_index('Date').sort_index()
         st.bar_chart(df[['Duration']])
-        
-        # Optionally, display the data table as well
-        st.write("### Task Details")
-        st.dataframe(df.reset_index()[['Task', 'Date']])
+        st.dataframe(df.reset_index()[['Task', 'Date']], use_container_width=True)
     else:
         st.info("No tasks with due dates to display on the calendar.")
 
 with tab4:
-    st.header("👥 People & Interactions")
-
+    st.header("People")
     with st.expander("Add New Person"):
         with st.form("new_person_form", clear_on_submit=True):
             person_name = st.text_input("Person's Name")
-            if st.form_submit_button("Add Person"):
+            if st.form_submit_button("Add Person", type="primary"):
                 if person_name:
                     try:
-                        db.add_person(person_name)
-                        st.success(f"Added {person_name}.")
+                        # UPDATED
+                        db.add_person(current_user, person_name)
+                        st.toast(f"Added {person_name}.", icon="👥")
                         st.rerun()
-                    except Exception as e:
-                        st.error(f"Could not add {person_name}. They may already exist.")
-                else:
-                    st.warning("Please enter a name.")
+                    except: st.error("Could not add person. They may already exist.")
+                else: st.warning("Please enter a name.")
 
-    selected_person_name = st.selectbox("Select a person to view/edit their interaction log:", [p['name'] for p in people])
-    
+    selected_person_name = st.selectbox("Select a person:", [p['name'] for p in people])
     if selected_person_name:
         person = next((p for p in people if p['name'] == selected_person_name), None)
         if person:
-            st.subheader(f"Log for {person['name']}")
             with st.form(key=f"person_log_{person['id']}"):
-                log_content = st.text_area(
-                    "Interaction Log (add new notes at the top)", 
-                    value=person['interaction_log'], 
-                    height=300
-                )
-                if st.form_submit_button("Save Log"):
-                    db.update_person_log(person['id'], log_content)
-                    st.success("Log updated!")
+                log_content = st.text_area("Interaction Log", value=person['interaction_log'], height=300)
+                if st.form_submit_button("Save Log", type="primary"):
+                    # UPDATED
+                    db.update_person_log(current_user, person['id'], log_content)
+                    st.toast("Log updated!", icon="📝")
                     st.rerun()

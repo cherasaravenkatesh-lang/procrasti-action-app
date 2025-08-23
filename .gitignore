@@ -1,5 +1,5 @@
-# Database file
-procrasti_action.db
+# Ignore all database files
+*.db
 
 # Python virtual environment & cache
 venv/
