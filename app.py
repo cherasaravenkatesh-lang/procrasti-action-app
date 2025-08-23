@@ -215,20 +215,32 @@ with tab3:
     st.header("🗓️ Calendar View")
     st.write("This is a simplified calendar view showing tasks with due dates.")
 
-    # We use pandas to create a timeline that Streamlit can display
     task_data = []
     for task in tasks:
         if task['due_date']:
-            task_data.append(dict(
-                Task=task['title'], 
-                Start=datetime.fromisoformat(task['due_date']), 
-                Finish=datetime.fromisoformat(task['due_date']) + timedelta(hours=1), # a small duration for visualization
-                Status=task['status']
-            ))
+            # Ensure the date is a proper datetime object
+            start_date = datetime.fromisoformat(task['due_date']).date()
+            task_data.append({
+                'Task': task['title'],
+                'Date': start_date,
+                'Duration': 1 # Represent each task as lasting 1 day for the chart
+            })
     
     if task_data:
         df = pd.DataFrame(task_data)
-        st.timeline(df, x_start="Start", x_end="Finish", y="Task", group="Status")
+        
+        # --- Using st.bar_chart as a robust alternative to st.timeline ---
+        st.write("### Task Schedule")
+        
+        # Set the date as the index for the chart's x-axis and sort it
+        df = df.set_index('Date').sort_index()
+        
+        # Display the chart. This function is available in all Streamlit versions.
+        st.bar_chart(df[['Duration']])
+        
+        # Optionally, display the data table as well
+        st.write("### Task Details")
+        st.dataframe(df.reset_index()[['Task', 'Date']])
     else:
         st.info("No tasks with due dates to display on the calendar.")
 
