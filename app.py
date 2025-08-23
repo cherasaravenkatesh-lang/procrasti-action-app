@@ -4,8 +4,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 import time
 import json
+import sqlite3 # <--- THIS IS THE FIX
 
-# --- Page Configuration and Authentication (No changes here) ---
+# --- Page Configuration and Authentication (No changes) ---
 st.set_page_config(page_title="Procrasti-Action", page_icon="✅", layout="wide")
 db.setup_users_db()
 if 'authenticated' not in st.session_state: st.session_state.authenticated = False
@@ -131,7 +132,7 @@ with tab3:
     else: st.info("No tasks with due dates to display on the calendar.")
 
 
-# --- All Tasks Tab (MAJOR UPDATES) ---
+# --- All Tasks Tab (No changes here) ---
 with tab2:
     st.header("All Tasks")
     with st.expander("Add a New Task"):
@@ -140,18 +141,15 @@ with tab2:
             due_date = st.date_input("Due Date", value=None)
             notes = st.text_area("Notes & Context")
             
-            # Simplified "General Questions" area
             questions = st.text_area("General Questions for this task")
             subtasks = st.text_area("Sub-tasks (one per line)")
 
-            # NEW: Linked People section for new tasks (simplified)
             st.markdown("**Link People & Questions**")
             linked_people_names = st.multiselect("Select people to link to this task", options=people_names)
 
             if st.form_submit_button("Add Task", type="primary"):
                 if not title: st.warning("Task Title is required.")
                 else:
-                    # Format linked people data for the database
                     linked_people_data = [{"name": name, "question": ""} for name in linked_people_names]
                     db.add_task(current_user, title, str(due_date) if due_date else None, notes, questions, subtasks, linked_people_data)
                     st.toast(f"Added task: {title}", icon="➕")
@@ -165,7 +163,6 @@ with tab2:
             due_date_str = f" (Due: {format_date(task['due_date'])})" if task['due_date'] else ""
             
             with st.status(f"{task['title']}{due_date_str}", expanded=False, state=("complete" if task['status'] == 'Completed' else "running")):
-                # Display linked people info cleanly
                 linked_people_list = json.loads(task['linked_people']) if task.get('linked_people') else []
                 if linked_people_list:
                     st.markdown("**Linked People & Questions:**")
@@ -184,37 +181,28 @@ with tab2:
                     if new_status == 'Blocked':
                         new_blocked_reason = st.text_input("Reason for being blocked?", value=task.get('blocked_reason', ''))
 
-                    # DYNAMIC UI for editing linked people
                     st.markdown("**Edit Linked People & Questions**")
-                    
-                    # Initialize session state for this task's people
                     session_key = f"linked_people_{task['id']}"
                     if session_key not in st.session_state:
                         st.session_state[session_key] = linked_people_list
                     
-                    # UI to remove people
                     indices_to_remove = []
                     for i, person in enumerate(st.session_state[session_key]):
                         col1, col2, col3 = st.columns([3, 5, 1])
                         col1.markdown(f"**{person['name']}**")
-                        # Update question in session state directly
                         st.session_state[session_key][i]['question'] = col2.text_input("Question", value=person.get('question', ''), key=f"q_{task['id']}_{i}", label_visibility="collapsed")
                         if col3.button("✖️", key=f"del_{task['id']}_{i}"):
                             indices_to_remove.append(i)
                     
-                    # Remove people if requested
                     if indices_to_remove:
                         st.session_state[session_key] = [p for i, p in enumerate(st.session_state[session_key]) if i not in indices_to_remove]
                         st.rerun()
 
-                    # UI to add a new person
                     new_person_name = st.selectbox("Add a person", options=[""] + people_names, key=f"add_person_{task['id']}")
                     if new_person_name:
-                        # Add to session state and rerun to update UI
                         st.session_state[session_key].append({"name": new_person_name, "question": ""})
                         st.rerun()
 
-                    # Subtasks UI (no change)
                     st.markdown("**Sub-tasks**")
                     subtasks_list = json.loads(task['subtasks']) if task['subtasks'] else []
                     for i, subtask in enumerate(subtasks_list):
@@ -223,16 +211,16 @@ with tab2:
                     btn_cols = st.columns(2)
                     if btn_cols[0].form_submit_button("Save Changes", type="primary", use_container_width=True):
                         db.update_task(current_user, task['id'], new_title, new_status, str(new_due_date) if new_due_date else None, new_notes, new_questions, subtasks_list, new_blocked_reason, st.session_state[session_key])
-                        del st.session_state[session_key] # Clean up session state
+                        del st.session_state[session_key]
                         st.toast(f"Updated '{new_title}'", icon="💾")
                         st.rerun()
                     if btn_cols[1].form_submit_button("Delete", use_container_width=True):
                         db.delete_task(current_user, task['id'])
-                        del st.session_state[session_key] # Clean up session state
+                        del st.session_state[session_key]
                         st.toast(f"Deleted '{task['title']}'", icon="🗑️")
                         st.rerun()
 
-# --- People Tab (Corrected Logic) ---
+# --- People Tab (No changes here, but the error was here) ---
 with tab4:
     st.header("People")
     with st.expander("Add New Person"):
@@ -244,7 +232,7 @@ with tab4:
                         db.add_person(current_user, person_name)
                         st.toast(f"Added {person_name}.", icon="👥")
                         st.rerun()
-                    except sqlite3.IntegrityError: # Catching the specific error
+                    except sqlite3.IntegrityError: # This line will now work
                         st.error(f"'{person_name}' already exists in your contacts.")
                     except Exception as e:
                         st.error(f"An error occurred: {e}")
