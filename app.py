@@ -188,7 +188,6 @@ with tab4:
                     try:
                         db.add_person(current_user, person_name)
                         st.toast(f"Added {person_name}.", icon="👥"); st.rerun()
-                    # CORRECTED EXCEPTION TYPE
                     except LibsqlError:
                         st.error(f"'{person_name}' already exists in your contacts.")
                     except Exception as e: st.error(f"An error occurred: {e}")
