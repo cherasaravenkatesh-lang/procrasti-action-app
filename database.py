@@ -2,64 +2,59 @@ import streamlit as st
 import json
 from datetime import datetime, timedelta
 import hashlib
-from libsql_client import create_client, LibsqlError
+from supabase import create_client, Client
 
-# The client is created ONCE using Streamlit's cache.
-# This function will only be called a single time.
+# --- Supabase Connection ---
 @st.cache_resource
 def get_db_client():
-    # We use the HTTPS URL, which forces the synchronous HTTP client.
-    # This is the key to avoiding all asyncio errors.
-    url = st.secrets["TURSO_DB_URL_HTTPS"] 
-    auth_token = st.secrets["TURSO_AUTH_TOKEN"]
-    return create_client(url=url, auth_token=auth_token)
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-# --- All functions are now normal, synchronous functions ---
+db: Client = get_db_client()
 
-def setup_database():
-    client = get_db_client()
-    client.batch([
-        "CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL)",
-        "CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT, status TEXT, due_date TEXT, notes TEXT, questions TEXT, subtasks TEXT, blocked_reason TEXT, created_at TEXT, linked_people TEXT, owner TEXT, recurrence_rule TEXT)",
-        "CREATE TABLE IF NOT EXISTS people (id INTEGER PRIMARY KEY, username TEXT, name TEXT, interaction_log TEXT, UNIQUE(username, name))"
-    ])
-    try:
-        client.execute("ALTER TABLE tasks ADD COLUMN recurrence_rule TEXT")
-    except LibsqlError: pass
-
+# --- User Management ---
 def hash_password(password): return hashlib.sha256(password.encode()).hexdigest()
 
 def add_user(username, password):
-    client = get_db_client()
     try:
-        client.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, hash_password(password)))
+        db.table('users').insert({
+            "username": username,
+            "password_hash": hash_password(password)
+        }).execute()
         return True
-    except LibsqlError: return False
+    except Exception as e:
+        # Supabase client raises a generic exception for unique constraint violations
+        if 'duplicate key value violates unique constraint' in str(e):
+            return False
+        raise e
 
 def verify_user(username, password):
-    client = get_db_client()
-    rs = client.execute("SELECT password_hash FROM users WHERE username = ?", (username,))
-    return len(rs.rows) > 0 and rs.rows[0][0] == hash_password(password)
+    user = db.table('users').select("password_hash").eq('username', username).execute().data
+    if not user:
+        return False
+    return user[0]['password_hash'] == hash_password(password)
 
-def rows_to_dicts(rs): return [dict(zip(rs.columns, row)) for row in rs.rows]
-
+# --- Task Functions ---
 def add_task(username, title, due_date, notes, questions, subtasks, linked_people, recurrence_rule):
-    client = get_db_client()
-    params = (title, "To-Do", due_date, notes, questions, json.dumps([{"text": s.strip(), "done": False} for s in subtasks.split('\n') if s.strip()]), datetime.now().isoformat(), json.dumps(linked_people), username, recurrence_rule)
-    client.execute("INSERT INTO tasks (title, status, due_date, notes, questions, subtasks, created_at, linked_people, owner, recurrence_rule) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", params)
+    subtasks_list = [{"text": s.strip(), "done": False} for s in subtasks.split('\n') if s.strip()]
+    db.table('tasks').insert({
+        'owner': username, 'title': title, 'due_date': due_date, 'notes': notes,
+        'questions': questions, 'subtasks': subtasks_list, 'status': 'To-Do',
+        'linked_people': linked_people, 'recurrence_rule': recurrence_rule
+    }).execute()
 
 def get_all_tasks(username):
-    client = get_db_client()
-    rs = client.execute("SELECT * FROM tasks WHERE owner=? ORDER BY due_date ASC", (username,))
-    return rows_to_dicts(rs)
+    return db.table('tasks').select("*").eq('owner', username).order('due_date').execute().data
 
 def update_task(username, task_id, title, status, due_date, notes, questions, subtasks, blocked_reason, linked_people, recurrence_rule):
-    client = get_db_client()
-    params = (title, status, due_date, notes, questions, json.dumps(subtasks), blocked_reason, json.dumps(linked_people), recurrence_rule, task_id, username)
-    client.execute("UPDATE tasks SET title=?, status=?, due_date=?, notes=?, questions=?, subtasks=?, blocked_reason=?, linked_people=?, recurrence_rule=? WHERE id=? AND owner=?", params)
+    db.table('tasks').update({
+        'title': title, 'status': status, 'due_date': due_date, 'notes': notes,
+        'questions': questions, 'subtasks': subtasks, 'blocked_reason': blocked_reason,
+        'linked_people': linked_people, 'recurrence_rule': recurrence_rule
+    }).eq('id', task_id).eq('owner', username).execute()
 
 def complete_recurring_task(username, task):
-    client = get_db_client()
     rule = task['recurrence_rule']; current_due_date = datetime.fromisoformat(task['due_date']); next_due_date = None
     if rule == 'weekly': next_due_date = current_due_date + timedelta(weeks=1)
     elif rule == 'monthly': next_due_date = current_due_date + timedelta(days=30)
@@ -70,21 +65,17 @@ def complete_recurring_task(username, task):
             if start_date.weekday() in enabled_days: next_due_date = start_date; break
             start_date += timedelta(days=1)
     if next_due_date:
-        client.execute("UPDATE tasks SET due_date = ? WHERE id = ? AND owner = ?", (next_due_date.isoformat(), task['id'], username))
+        db.table('tasks').update({'due_date': next_due_date.isoformat()}).eq('id', task['id']).eq('owner', username).execute()
 
 def delete_task(username, task_id):
-    client = get_db_client()
-    client.execute("DELETE FROM tasks WHERE id=? AND owner=?", (task_id, username))
+    db.table('tasks').delete().eq('id', task_id).eq('owner', username).execute()
 
+# --- People Functions ---
 def add_person(username, name):
-    client = get_db_client()
-    client.execute("INSERT INTO people (username, name, interaction_log) VALUES (?, ?, ?)", (username, name, ""))
+    db.table('people').insert({'username': username, 'name': name}).execute()
 
 def get_all_people(username):
-    client = get_db_client()
-    rs = client.execute("SELECT * FROM people WHERE username=? ORDER BY name ASC", (username,))
-    return rows_to_dicts(rs)
+    return db.table('people').select("*").eq('username', username).order('name').execute().data
 
 def update_person_log(username, person_id, log):
-    client = get_db_client()
-    client.execute("UPDATE people SET interaction_log=? WHERE id=? AND username=?", (log, person_id, username))
+    db.table('people').update({'interaction_log': log}).eq('id', person_id).eq('username', username).execute()
