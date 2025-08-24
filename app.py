@@ -4,12 +4,14 @@ import pandas as pd
 from datetime import datetime
 import time
 import json
-# CORRECTED IMPORT: We now import the specific error class 'LibsqlError'
+import asyncio
 from libsql_client import LibsqlError
 
 # --- Page Config ---
 st.set_page_config(page_title="Procrasti-Action", page_icon="✅", layout="wide")
-db.setup_database()
+
+# --- Initialize Remote Database (now an async call) ---
+asyncio.run(db.setup_database())
 
 # --- Authentication ---
 if 'authenticated' not in st.session_state: st.session_state.authenticated = False
@@ -22,24 +24,45 @@ def login_form():
         if st.form_submit_button(label=choice):
             if not username or not password: st.error("Username and password are required."); return
             if choice == "Sign Up":
-                if db.add_user(username, password): st.success("Account created! Please log in.")
+                if asyncio.run(db.add_user(username, password)): st.success("Account created! Please log in.")
                 else: st.error("Username already exists.")
             elif choice == "Login":
-                if db.verify_user(username, password): st.session_state.authenticated = True; st.session_state.username = username; st.rerun()
+                if asyncio.run(db.verify_user(username, password)):
+                    st.session_state.authenticated = True; st.session_state.username = username; st.rerun()
                 else: st.error("Invalid username or password.")
 if not st.session_state.authenticated: login_form(); st.stop()
 
 # --- Main App ---
 current_user = st.session_state.username
 
-# --- Pomodoro, Helpers, Sidebar ---
-if 'pomodoro_mode' not in st.session_state: st.session_state.pomodoro_mode = "Focus"
-if 'pomodoro_seconds' not in st.session_state: st.session_state.pomodoro_seconds = 25 * 60
-if 'pomodoro_running' not in st.session_state: st.session_state.pomodoro_running = False
-if 'pomodoro_sessions' not in st.session_state: st.session_state.pomodoro_sessions = 0
-def format_date(date_str):
-    if date_str: return datetime.fromisoformat(date_str).strftime("%a, %b %d, %Y")
-    return "No date"
+# --- Pomodoro, Helpers, Sidebar (no changes needed) ---
+# ... (Paste the sidebar block from your last version) ...
+
+# --- Main App Interface ---
+# ALL CALLS to the database are now wrapped in asyncio.run()
+tasks = asyncio.run(db.get_all_tasks(current_user))
+people = asyncio.run(db.get_all_people(current_user))
+people_names = [p['name'] for p in people]
+tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "All Tasks", "Calendar", "People"])
+
+# --- All other tabs remain the same, just wrap the db calls ---
+# Example for "Add Task"
+# if st.form_submit_button("Add Task", type="primary"):
+#     ...
+#     asyncio.run(db.add_task(current_user, ...)) # WRAP THE CALL
+#     st.toast(...); st.rerun()
+#
+# Example for "Save Changes"
+# if btn_cols[0].form_submit_button("Save Changes", ...):
+#     if new_status == 'Completed' and task.get('recurrence_rule'):
+#         asyncio.run(db.complete_recurring_task(current_user, task)) # WRAP THE CALL
+#     else:
+#         asyncio.run(db.update_task(current_user, ...)) # WRAP THE CALL
+#
+# ... and so on for ALL db calls (delete_task, add_person, update_person_log)
+
+# PASTE YOUR FULL APP.PY UI CODE HERE, and just wrap every `db.` call with `asyncio.run(db. ... )`
+# I'll provide the fully wrapped version below to be safe.
 with st.sidebar:
     st.title(f"Welcome, {current_user}!");
     if st.button("Logout", use_container_width=True): st.session_state.authenticated = False; st.session_state.username = ""; st.rerun()
@@ -59,12 +82,6 @@ with st.sidebar:
             if st.session_state.pomodoro_mode == "Focus": st.session_state.pomodoro_sessions += 1; st.rerun()
     else: mins, secs = divmod(st.session_state.pomodoro_seconds, 60); timer_placeholder.metric(f"{st.session_state.pomodoro_mode}", f"{mins:02d}:{secs:02d}")
     st.info(f"Completed Sessions: {st.session_state.pomodoro_sessions}")
-
-# --- Main App Interface ---
-tasks = db.get_all_tasks(current_user)
-people = db.get_all_people(current_user)
-people_names = [p['name'] for p in people]
-tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "All Tasks", "Calendar", "People"])
 with tab1:
     st.header("Dashboard"); st.write(f"Today is **{datetime.now().strftime('%A, %B %d')}**. You have **{len([t for t in tasks if t['status'] != 'Completed'])}** active tasks.")
     col1, col2 = st.columns(2); today = datetime.now().date()
@@ -85,11 +102,9 @@ with tab2:
     with st.expander("Add a New Task"):
         with st.form("new_task_form", clear_on_submit=True):
             title = st.text_input("Task Title *"); due_date = st.date_input("Due Date", value=None); notes = st.text_area("Notes & Context")
-            st.markdown("**Recurrence**")
-            recur_type = st.selectbox("Repeats", ["None", "Weekly", "Monthly", "Specific Days"])
+            st.markdown("**Recurrence**"); recur_type = st.selectbox("Repeats", ["None", "Weekly", "Monthly", "Specific Days"])
             weekdays_options = []
-            if recur_type == "Specific Days":
-                weekdays_options = st.multiselect("On which days?", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
+            if recur_type == "Specific Days": weekdays_options = st.multiselect("On which days?", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
             questions = st.text_area("General Questions"); subtasks = st.text_area("Sub-tasks (one per line)")
             st.markdown("**Link People**"); linked_people_names = st.multiselect("Select people to link", options=people_names)
             if st.form_submit_button("Add Task", type="primary"):
@@ -99,10 +114,9 @@ with tab2:
                 elif recur_type == 'Monthly': recurrence_rule = 'monthly'
                 elif recur_type == 'Specific Days' and weekdays_options:
                     day_map = {"Monday": "M", "Tuesday": "T", "Wednesday": "W", "Thursday": "H", "Friday": "F", "Saturday": "S", "Sunday": "U"}
-                    rule_str = "".join([day_map[day] for day in weekdays_options])
-                    recurrence_rule = f'weekdays:{rule_str}'
+                    rule_str = "".join([day_map[day] for day in weekdays_options]); recurrence_rule = f'weekdays:{rule_str}'
                 linked_people_data = [{"name": name, "question": ""} for name in linked_people_names]
-                db.add_task(current_user, title, str(due_date) if due_date else None, notes, questions, subtasks, linked_people_data, recurrence_rule)
+                asyncio.run(db.add_task(current_user, title, str(due_date) if due_date else None, notes, questions, subtasks, linked_people_data, recurrence_rule))
                 st.toast(f"Added task: {title}", icon="➕"); st.rerun()
     st.divider()
     filter_status = st.multiselect("Filter by status:", options=["To-Do", "In Progress", "Blocked", "Completed"], default=["To-Do", "In Progress", "Blocked"])
@@ -116,33 +130,23 @@ with tab2:
                 if session_key not in st.session_state: st.session_state[session_key] = linked_people_list
                 st.markdown("**Linked People & Questions**"); indices_to_remove = []
                 for i, person in enumerate(st.session_state[session_key]):
-                    col1, col2, col3 = st.columns([3, 5, 1])
-                    col1.markdown(f"**{person['name']}**")
+                    col1, col2, col3 = st.columns([3, 5, 1]); col1.markdown(f"**{person['name']}**")
                     st.session_state[session_key][i]['question'] = col2.text_input("Question for person", value=person.get('question', ''), key=f"q_{task['id']}_{i}", label_visibility="collapsed")
                     if col3.button("✖️", key=f"del_{task['id']}_{i}"): indices_to_remove.append(i)
-                if indices_to_remove:
-                    st.session_state[session_key] = [p for i, p in enumerate(st.session_state[session_key]) if i not in indices_to_remove]
-                    st.rerun()
+                if indices_to_remove: st.session_state[session_key] = [p for i, p in enumerate(st.session_state[session_key]) if i not in indices_to_remove]; st.rerun()
                 new_person_name = st.selectbox("Add a person", options=[""] + people_names, key=f"add_person_{task['id']}")
                 if new_person_name:
                     if not any(p['name'] == new_person_name for p in st.session_state[session_key]):
-                        st.session_state[session_key].append({"name": new_person_name, "question": ""})
-                        st.rerun()
+                        st.session_state[session_key].append({"name": new_person_name, "question": ""}); st.rerun()
                 st.divider()
                 with st.form(key=f"form_{task['id']}"):
-                    st.markdown("**Task Details**")
-                    new_title = st.text_input("Title", value=task['title'])
-                    cols = st.columns(2)
+                    st.markdown("**Task Details**"); new_title = st.text_input("Title", value=task['title']); cols = st.columns(2)
                     new_status = cols[0].selectbox("Status", options=["To-Do", "In Progress", "Blocked", "Completed"], index=["To-Do", "In Progress", "Blocked", "Completed"].index(task['status']))
-                    due_date_val = datetime.fromisoformat(task['due_date']) if task['due_date'] else None
-                    new_due_date = cols[1].date_input("Due Date", value=due_date_val)
-                    new_notes = st.text_area("Notes", value=task['notes'])
-                    new_questions = st.text_area("General Questions", value=task['questions'])
+                    due_date_val = datetime.fromisoformat(task['due_date']) if task['due_date'] else None; new_due_date = cols[1].date_input("Due Date", value=due_date_val)
+                    new_notes = st.text_area("Notes", value=task['notes']); new_questions = st.text_area("General Questions", value=task['questions'])
                     new_blocked_reason = task['blocked_reason'] if task['status'] == 'Blocked' else ''
                     if new_status == 'Blocked': new_blocked_reason = st.text_input("Reason for being blocked?", value=task.get('blocked_reason', ''))
-                    st.markdown("**Recurrence**")
-                    current_rule = task.get('recurrence_rule') or 'None'
-                    recur_map = {'None': 0, 'weekly': 1, 'monthly': 2}
+                    st.markdown("**Recurrence**"); current_rule = task.get('recurrence_rule') or 'None'; recur_map = {'None': 0, 'weekly': 1, 'monthly': 2}
                     default_index = recur_map.get(current_rule, 3)
                     new_recur_type = st.selectbox("Repeats", ["None", "Weekly", "Monthly", "Specific Days"], index=default_index, key=f"recur_{task['id']}")
                     new_weekdays_options = []
@@ -150,10 +154,8 @@ with tab2:
                         day_map_inv = {"M": "Monday", "T": "Tuesday", "W": "Wednesday", "H": "Thursday", "F": "Friday", "S": "Saturday", "U": "Sunday"}
                         default_days = [day_map_inv[char] for char in current_rule.split(':')[1]] if current_rule and current_rule.startswith('weekdays:') else []
                         new_weekdays_options = st.multiselect("On which days?", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], default=default_days, key=f"weekdays_{task['id']}")
-                    st.markdown("**Sub-tasks**")
-                    subtasks_list = json.loads(task['subtasks']) if task['subtasks'] else []
-                    for i, subtask in enumerate(subtasks_list):
-                        subtasks_list[i]['done'] = st.checkbox(subtask['text'], value=subtask['done'], key=f"sub_{task['id']}_{i}")
+                    st.markdown("**Sub-tasks**"); subtasks_list = json.loads(task['subtasks']) if task['subtasks'] else []
+                    for i, subtask in enumerate(subtasks_list): subtasks_list[i]['done'] = st.checkbox(subtask['text'], value=subtask['done'], key=f"sub_{task['id']}_{i}")
                     btn_cols = st.columns(2)
                     if btn_cols[0].form_submit_button("Save Changes", type="primary", use_container_width=True):
                         new_recurrence_rule = None
@@ -161,17 +163,16 @@ with tab2:
                         elif new_recur_type == 'Monthly': new_recurrence_rule = 'monthly'
                         elif new_recur_type == 'Specific Days' and new_weekdays_options:
                             day_map = {"Monday": "M", "Tuesday": "T", "Wednesday": "W", "Thursday": "H", "Friday": "F", "Saturday": "S", "Sunday": "U"}
-                            rule_str = "".join([day_map[day] for day in new_weekdays_options])
-                            new_recurrence_rule = f'weekdays:{rule_str}'
+                            rule_str = "".join([day_map[day] for day in new_weekdays_options]); new_recurrence_rule = f'weekdays:{rule_str}'
                         if new_status == 'Completed' and task.get('recurrence_rule') and task.get('due_date'):
-                            db.complete_recurring_task(current_user, task)
+                            asyncio.run(db.complete_recurring_task(current_user, task))
                             st.toast(f"Completed and rescheduled '{new_title}'!", icon="👍")
                         else:
-                            db.update_task(current_user, task['id'], new_title, new_status, str(new_due_date) if new_due_date else None, new_notes, new_questions, subtasks_list, new_blocked_reason, st.session_state[session_key], new_recurrence_rule)
+                            asyncio.run(db.update_task(current_user, task['id'], new_title, new_status, str(new_due_date) if new_due_date else None, new_notes, new_questions, subtasks_list, new_blocked_reason, st.session_state[session_key], new_recurrence_rule))
                             st.toast(f"Updated '{new_title}'", icon="💾")
                         del st.session_state[session_key]; st.rerun()
                     if btn_cols[1].form_submit_button("Delete", use_container_width=True):
-                        db.delete_task(current_user, task['id'])
+                        asyncio.run(db.delete_task(current_user, task['id']))
                         del st.session_state[session_key]; st.toast(f"Deleted '{task['title']}'", icon="🗑️"); st.rerun()
 with tab3:
     st.header("Calendar");
@@ -186,10 +187,9 @@ with tab4:
             if st.form_submit_button("Add Person", type="primary"):
                 if person_name:
                     try:
-                        db.add_person(current_user, person_name)
+                        asyncio.run(db.add_person(current_user, person_name))
                         st.toast(f"Added {person_name}.", icon="👥"); st.rerun()
-                    except LibsqlError:
-                        st.error(f"'{person_name}' already exists in your contacts.")
+                    except LibsqlError: st.error(f"'{person_name}' already exists in your contacts.")
                     except Exception as e: st.error(f"An error occurred: {e}")
                 else: st.warning("Please enter a name.")
     if not people: st.info("You haven't added any people yet.")
@@ -200,5 +200,5 @@ with tab4:
             with st.form(key=f"person_log_{person['id']}"):
                 log_content = st.text_area("Interaction Log", value=person['interaction_log'], height=300)
                 if st.form_submit_button("Save Log", type="primary"):
-                    db.update_person_log(current_user, person['id'], log_content)
+                    asyncio.run(db.update_person_log(current_user, person['id'], log_content))
                     st.toast("Log updated!", icon="📝"); st.rerun()
