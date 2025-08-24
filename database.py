@@ -2,20 +2,18 @@ import streamlit as st
 import json
 from datetime import datetime, timedelta
 import hashlib
-import asyncio
 from libsql_client import create_client, LibsqlError
 
-# This function is the key. It creates the async client ONCE and caches it.
-# Streamlit's caching is smart enough to handle this correctly.
+# The client is now created ONCE per session and cached. This is efficient.
 @st.cache_resource
 def get_db_client():
     url = st.secrets["TURSO_DB_URL"]
     auth_token = st.secrets["TURSO_AUTH_TOKEN"]
-    # We use the original libsql:// URL because we are now correctly handling async.
-    # The URL should look like: libsql://your-db-name-cherasaravenkatesh-lang.turso.io
     return create_client(url=url, auth_token=auth_token)
 
-# --- User Management & Setup ---
+# --- All functions are now clean async functions ---
+# No asyncio.run() anywhere in this file.
+
 async def setup_database():
     client = get_db_client()
     await client.batch([
@@ -43,7 +41,6 @@ async def verify_user(username, password):
 
 def rows_to_dicts(rs): return [dict(zip(rs.columns, row)) for row in rs.rows]
 
-# --- All data functions are now async ---
 async def add_task(username, title, due_date, notes, questions, subtasks, linked_people, recurrence_rule):
     client = get_db_client()
     params = (title, "To-Do", due_date, notes, questions, json.dumps([{"text": s.strip(), "done": False} for s in subtasks.split('\n') if s.strip()]), datetime.now().isoformat(), json.dumps(linked_people), username, recurrence_rule)
