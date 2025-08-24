@@ -1,16 +1,14 @@
-# Example change: Adding a new title
 import streamlit as st
 import database as db
 import pandas as pd
 from datetime import datetime
 import time
 import json
-from libsql_client import exceptions # For Turso-specific errors
+# CORRECTED IMPORT: We now import the specific error class 'LibsqlError'
+from libsql_client import LibsqlError
 
 # --- Page Config ---
 st.set_page_config(page_title="Procrasti-Action", page_icon="✅", layout="wide")
-
-# --- Initialize Remote Database (runs once) ---
 db.setup_database()
 
 # --- Authentication ---
@@ -29,7 +27,6 @@ def login_form():
             elif choice == "Login":
                 if db.verify_user(username, password): st.session_state.authenticated = True; st.session_state.username = username; st.rerun()
                 else: st.error("Invalid username or password.")
-
 if not st.session_state.authenticated: login_form(); st.stop()
 
 # --- Main App ---
@@ -68,7 +65,6 @@ tasks = db.get_all_tasks(current_user)
 people = db.get_all_people(current_user)
 people_names = [p['name'] for p in people]
 tab1, tab2, tab3, tab4 = st.tabs(["Dashboard", "All Tasks", "Calendar", "People"])
-
 with tab1:
     st.header("Dashboard"); st.write(f"Today is **{datetime.now().strftime('%A, %B %d')}**. You have **{len([t for t in tasks if t['status'] != 'Completed'])}** active tasks.")
     col1, col2 = st.columns(2); today = datetime.now().date()
@@ -84,7 +80,6 @@ with tab1:
         if blocked_tasks:
             for task in blocked_tasks: st.info(f"**{task['title']}** - Reason: {task['blocked_reason'] or 'Not specified'}")
         else: st.info("No blocked tasks. Keep up the momentum!")
-
 with tab2:
     st.header("All Tasks")
     with st.expander("Add a New Task"):
@@ -111,11 +106,8 @@ with tab2:
                 st.toast(f"Added task: {title}", icon="➕"); st.rerun()
     st.divider()
     filter_status = st.multiselect("Filter by status:", options=["To-Do", "In Progress", "Blocked", "Completed"], default=["To-Do", "In Progress", "Blocked"])
-    
     for task in tasks:
-        # THIS IS THE LINE (approx. 156) THAT WAS CAUSING THE ERROR
         if task['status'] in filter_status:
-            # THIS 'with st.status(...)' BLOCK IS THE REQUIRED INDENTED BLOCK
             due_date_str = f" (Due: {format_date(task['due_date'])})" if task['due_date'] else ""
             recur_icon = "🔄" if task.get('recurrence_rule') else ""
             with st.status(f"{recur_icon} {task['title']}{due_date_str}".strip(), expanded=False, state=("complete" if task['status'] == 'Completed' else "running")):
@@ -148,25 +140,20 @@ with tab2:
                     new_questions = st.text_area("General Questions", value=task['questions'])
                     new_blocked_reason = task['blocked_reason'] if task['status'] == 'Blocked' else ''
                     if new_status == 'Blocked': new_blocked_reason = st.text_input("Reason for being blocked?", value=task.get('blocked_reason', ''))
-                    
                     st.markdown("**Recurrence**")
                     current_rule = task.get('recurrence_rule') or 'None'
                     recur_map = {'None': 0, 'weekly': 1, 'monthly': 2}
-                    default_index = recur_map.get(current_rule, 3) # Default to 'Specific Days' if not found
+                    default_index = recur_map.get(current_rule, 3)
                     new_recur_type = st.selectbox("Repeats", ["None", "Weekly", "Monthly", "Specific Days"], index=default_index, key=f"recur_{task['id']}")
                     new_weekdays_options = []
                     if new_recur_type == "Specific Days":
                         day_map_inv = {"M": "Monday", "T": "Tuesday", "W": "Wednesday", "H": "Thursday", "F": "Friday", "S": "Saturday", "U": "Sunday"}
-                        default_days = []
-                        if current_rule and current_rule.startswith('weekdays:'):
-                            default_days = [day_map_inv[char] for char in current_rule.split(':')[1]]
+                        default_days = [day_map_inv[char] for char in current_rule.split(':')[1]] if current_rule and current_rule.startswith('weekdays:') else []
                         new_weekdays_options = st.multiselect("On which days?", ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"], default=default_days, key=f"weekdays_{task['id']}")
-
                     st.markdown("**Sub-tasks**")
                     subtasks_list = json.loads(task['subtasks']) if task['subtasks'] else []
                     for i, subtask in enumerate(subtasks_list):
                         subtasks_list[i]['done'] = st.checkbox(subtask['text'], value=subtask['done'], key=f"sub_{task['id']}_{i}")
-
                     btn_cols = st.columns(2)
                     if btn_cols[0].form_submit_button("Save Changes", type="primary", use_container_width=True):
                         new_recurrence_rule = None
@@ -176,8 +163,7 @@ with tab2:
                             day_map = {"Monday": "M", "Tuesday": "T", "Wednesday": "W", "Thursday": "H", "Friday": "F", "Saturday": "S", "Sunday": "U"}
                             rule_str = "".join([day_map[day] for day in new_weekdays_options])
                             new_recurrence_rule = f'weekdays:{rule_str}'
-
-                        if new_status == 'Completed' and task.get('recurrence_rule'):
+                        if new_status == 'Completed' and task.get('recurrence_rule') and task.get('due_date'):
                             db.complete_recurring_task(current_user, task)
                             st.toast(f"Completed and rescheduled '{new_title}'!", icon="👍")
                         else:
@@ -187,13 +173,11 @@ with tab2:
                     if btn_cols[1].form_submit_button("Delete", use_container_width=True):
                         db.delete_task(current_user, task['id'])
                         del st.session_state[session_key]; st.toast(f"Deleted '{task['title']}'", icon="🗑️"); st.rerun()
-
 with tab3:
     st.header("Calendar");
     task_data = [{'Task': t['title'], 'Date': datetime.fromisoformat(t['due_date']).date(), 'Duration': 1} for t in tasks if t['due_date']]
     if task_data: df = pd.DataFrame(task_data).set_index('Date').sort_index(); st.bar_chart(df[['Duration']]); st.dataframe(df.reset_index()[['Task', 'Date']], use_container_width=True)
     else: st.info("No tasks with due dates to display on the calendar.")
-
 with tab4:
     st.header("People")
     with st.expander("Add New Person"):
@@ -204,7 +188,8 @@ with tab4:
                     try:
                         db.add_person(current_user, person_name)
                         st.toast(f"Added {person_name}.", icon="👥"); st.rerun()
-                    except exceptions.LibsqlError:
+                    # CORRECTED EXCEPTION TYPE
+                    except LibsqlError:
                         st.error(f"'{person_name}' already exists in your contacts.")
                     except Exception as e: st.error(f"An error occurred: {e}")
                 else: st.warning("Please enter a name.")
